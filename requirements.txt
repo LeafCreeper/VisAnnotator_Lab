@@ -5,3 +5,4 @@ pydantic
 openpyxl
 plotly
 scikit-learn
+anthropic
