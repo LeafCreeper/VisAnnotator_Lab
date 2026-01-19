@@ -11,9 +11,13 @@
 *   **信效度检验 (Reliability & Validity)**：内置人工标注界面与 Cohen's Kappa 计算模块，轻松验证模型与人类的一致性，满足学术发表标准。
 *   **批量生产 (Batch Production)**：从调试模式无缝切换至生产模式，支持高并发批量标注，并提供独立的 Python 脚本导出功能。
 
+## 直接运行网页版：
+
+https://visannotatorlab.streamlit.app/
+
 ---
 
-## 🚀 快速开始
+## 🚀 本地部署
 
 ### 1. 环境准备
 
