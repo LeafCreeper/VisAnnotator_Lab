@@ -61,6 +61,50 @@ def render_eval_tab(config):
                 st.rerun()
             
             st.divider()
+            
+            # --- New Feature: Import Ground Truth ---
+            with st.expander("📂 从数据列导入正确答案 (Import Ground Truth)", expanded=False):
+                st.info("如果您上传的数据中已经包含了某些变量的正确标注（Ground Truth），可以在此将其批量映射到验证集，无需手动重新标注。")
+                
+                mapping = {}
+                cols = st.session_state.df.columns.tolist()
+                cols_options = ["(不导入)"] + cols
+                
+                # Grid layout for mapping
+                m_cols = st.columns(3)
+                
+                for i, field in enumerate(st.session_state.schema_fields):
+                    fname = field["name"]
+                    if not fname: continue
+                    
+                    # Auto-match if column name matches field name
+                    default_idx = 0
+                    if fname in cols:
+                        default_idx = cols_options.index(fname)
+                    
+                    with m_cols[i % 3]:
+                        mapping[fname] = st.selectbox(
+                            f"Field `{fname}` 对应列:", 
+                            cols_options, 
+                            index=default_idx,
+                            key=f"map_{fname}"
+                        )
+                
+                if st.button("📥 开始导入 (Import)", type="primary"):
+                    imported_count = 0
+                    for idx in st.session_state.validation_indices:
+                        if idx not in st.session_state.human_annotations:
+                            st.session_state.human_annotations[idx] = {}
+                            
+                        for fname, col_name in mapping.items():
+                            if col_name != "(不导入)":
+                                val = st.session_state.df.at[idx, col_name]
+                                st.session_state.human_annotations[idx][fname] = str(val)
+                    
+                    st.success(f"成功为验证集导入了标注数据！")
+                    st.rerun()
+
+            st.divider()
 
             # --- Annotation Interface ---
             

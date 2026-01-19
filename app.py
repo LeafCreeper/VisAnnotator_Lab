@@ -4,6 +4,7 @@ from src.ui.data_tab import render_data_tab
 from src.ui.schema_tab import render_schema_tab
 from src.ui.playground_tab import render_playground_tab
 from src.ui.eval_tab import render_eval_tab
+from src.ui.onboarding import show_onboarding
 
 # Set page config
 st.set_page_config(
@@ -27,6 +28,10 @@ if 'validation_indices' not in st.session_state:
 if 'human_annotations' not in st.session_state:
     st.session_state.human_annotations = {}
 
+# Tutorial State
+if 'has_seen_tutorial' not in st.session_state:
+    st.session_state.has_seen_tutorial = False
+
 # --- New: Multi-Prompt Configuration State ---
 if 'prompt_configs' not in st.session_state:
     # Migrate old state if exists, else default
@@ -40,13 +45,16 @@ if 'prompt_configs' not in st.session_state:
 if 'current_config_idx' not in st.session_state:
     st.session_state.current_config_idx = 0
 
-# Helper to sync legacy keys for backward compatibility with other modules (until updated)
-# We update these whenever current config changes or is edited
+# Helper to sync legacy keys for backward compatibility
 current = st.session_state.prompt_configs[st.session_state.current_config_idx]
 st.session_state.system_prompt = current["system"]
 st.session_state.user_prompt_template = current["user"]
 
 def main():
+    # Show onboarding dialog if needed
+    if not st.session_state.has_seen_tutorial:
+        show_onboarding()
+
     # Render Sidebar and get Config
     config = render_sidebar()
 
