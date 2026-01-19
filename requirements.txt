@@ -4,3 +4,4 @@ openai
 pydantic
 openpyxl
 plotly
+scikit-learn
