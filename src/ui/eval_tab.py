@@ -256,7 +256,7 @@ def render_eval_tab(config):
                 analysis_rows.append(row_data)
             
             df_analysis = pd.DataFrame(analysis_rows)
-            st.dataframe(df_analysis, use_container_width=True)
+            st.dataframe(df_analysis, width="stretch")
             
             # 3. Metrics Table
             st.subheader("📈 信效度指标 (Metrics)")

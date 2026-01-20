@@ -2,3 +2,4 @@ productrequest.md
 error.md
 __pycache__/
 *.pyc
+logs*

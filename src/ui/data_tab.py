@@ -16,7 +16,7 @@ def render_data_tab():
             st.success(f"成功加载 {len(df)} 行数据。")
             
             st.subheader("数据预览")
-            st.dataframe(df.head(100), use_container_width=True)
+            st.dataframe(df.head(100), width="stretch")
             
         except Exception as e:
             st.error(f"加载文件出错: {e}")

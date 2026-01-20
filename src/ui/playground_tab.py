@@ -53,7 +53,7 @@ def render_playground_tab(config):
                     target_df = st.session_state.df.head(n).copy()
         
         st.markdown(f"**当前预览 (Preview): {len(target_df)} rows**")
-        st.dataframe(target_df.head(), use_container_width=True)
+        st.dataframe(target_df.head(), width="stretch")
 
     else: # Production Mode
         st.warning("⚠️ 生产模式将对**所有**上传数据进行标注。请确保您的 API Key 余额充足，并且已在调试模式下验证过效果。")
@@ -160,7 +160,7 @@ def render_playground_tab(config):
             c2.metric("失败条数", error_count)
             c3.metric("成功率", f"{rate:.1f}%")
         
-        st.dataframe(df_res.head(100), use_container_width=True)
+        st.dataframe(df_res.head(100), width="stretch")
         if len(df_res) > 100:
             st.caption(f"仅展示前 100 行，共 {len(df_res)} 行。请下载完整文件查看。")
 

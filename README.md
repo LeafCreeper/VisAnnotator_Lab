@@ -1,12 +1,12 @@
 # VisAnnotator Lab - 计算社会科学标注实验台
 
-**VisAnnotator Lab** 是一个专为社会科学研究者设计的“所见即所得” (WYSIWYG) 大模型文本标注实验台。它旨在弥合定性调试与定量生产之间的鸿沟，让您无需编写复杂的 Python 代码，即可利用 DeepSeek 等大语言模型 (LLM) 进行大规模、高信度的文本分析。
+**VisAnnotator Lab** 是一个专为社会科学研究者设计的“所见即所得” (WYSIWYG) 大模型文本标注实验台。它旨在弥合定性调试与定量生产之间的鸿沟，让您无需编写复杂的 Python 代码，即可利用大语言模型 (LLM) 进行大规模、高信度的文本分析。
 
 ![Status](https://img.shields.io/badge/Status-Beta-blue) ![Python](https://img.shields.io/badge/Python-3.9%2B-green) ![Streamlit](https://img.shields.io/badge/Streamlit-1.28%2B-red)
 
 ## 🎯 核心价值
 
-*   **可视化调试 (Interactive Debugging)**：摆脱黑盒，实时查看 Prompt 对特定样本的输出效果。
+*   **可视化调试 (Interactive Debugging)**：摆脱黑盒，实时查看 Prompt 对特定样本的输出效果。支持Prompt调试和标注测试分栏呈现，交互友好。
 *   **结构化输出 (Structured Output)**：通过 GUI 定义 JSON Schema，确保 LLM 输出严格符合格式要求，无需后期清洗。
 *   **信效度检验 (Reliability & Validity)**：内置人工标注界面与 Cohen's Kappa 计算模块，轻松验证模型与人类的一致性，满足学术发表标准。
 *   **批量生产 (Batch Production)**：从调试模式无缝切换至生产模式，支持高并发批量标注，并提供独立的 Python 脚本导出功能。

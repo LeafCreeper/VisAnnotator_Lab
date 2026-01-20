@@ -384,5 +384,5 @@ def render_schema_tab(config):
 
                 st.dataframe(
                     res_df, 
-                    use_container_width=True
+                    width="stretch"
                 )
