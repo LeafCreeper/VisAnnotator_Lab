@@ -198,7 +198,7 @@ def render_sidebar():
         with c1:
             config["temperature"] = st.slider("温度 (Temperature)", 0.0, 2.0, 1.0, 0.1)
         with c2:
-            config["max_tokens"] = st.number_input("最大 Token 数", 1, 128000, 4096)
+            config["max_tokens"] = st.number_input("最大 Token 数", 1, 128000, 8192)
         
         c3, c4 = st.columns(2)
         with c3:

@@ -198,7 +198,7 @@ def render_schema_tab(config):
                         for idx, col in enumerate(row_cols):
                             with c_list[idx]:
                                 # Use compact button without full container width
-                                if st.button(f"➕ {col}", key=f"btn_insert_{col}"):
+                                if st.button(f"{col}", key=f"btn_insert_{col}"):
                                     append_var(col)
                                     # No explicit rerun needed if button callback updates state? 
                                     # Actually yes, to refresh the text_area. 
