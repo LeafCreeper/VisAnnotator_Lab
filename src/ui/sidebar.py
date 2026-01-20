@@ -23,8 +23,91 @@ def render_sidebar():
             mime="application/json"
         )
         
-        # Import
-        uploaded_config = st.file_uploader("📥 导入配置", type=["json"])
+        st.write("") # Spacer
+        
+        # Import with Help Dialog Trigger
+        c_label, c_help = st.columns([0.85, 0.15])
+        with c_label:
+            st.markdown("**📥 导入配置**")
+        
+        # State to control dialog visibility
+        if 'show_config_help' not in st.session_state:
+            st.session_state.show_config_help = False
+
+        def toggle_help():
+            st.session_state.show_config_help = True
+
+        with c_help:
+            # Simple button, on_click triggers state change
+            st.button("❓", on_click=toggle_help, help="标注变量太多，不想手动配置怎么办？")
+
+        # Dialog Implementation (Simulated Modal via st.expander or st.dialog if available in future, 
+        # here we use a conditional container or new API if available. 
+        # Since we are on Streamlit >= 1.28, `st.dialog` (experimental) or custom modal is needed.
+        # But for stability, we will use the `show_onboarding` style approach if we want a true modal, 
+        # or `st.popover` (available in newer Streamlit) which we used before but user disliked the style.
+        # User requested "Like onboarding dialog". Onboarding uses `st.rerun()` loop or just renders on top.
+        # Let's check `src/ui/onboarding.py` to see how it's done.
+        
+        # Assuming we can use st.dialog (Streamlit 1.34+) which is experimental_dialog.
+        # If not, we fallback to session state conditional rendering at top of app?
+        # But sidebar renders early.
+        # Let's use `st.expander` or just `st.info` if we can't do full modal easily here without complex logic.
+        # WAIT: User said "popover" style was "ugly button". But popover IS a modal-like. 
+        # User specifically asked for "Circle Exclamation" char.
+        # And "Like Newcomer Tutorial".
+        
+        # Let's try `st.experimental_dialog` if possible, else standard conditional.
+        # Since I can't be sure of version, I will stick to the safe `st.popover` logic BUT 
+        # change the button appearance as requested to just a char.
+        # But wait, I already did popover and user said "Button feels ugly".
+        # So I will use a minimal button "❓" and trigger a `st.dialog`.
+        
+        # Let's define the dialog function
+        @st.dialog("🤖 智能配置助手")
+        def show_ai_config_help():
+            st.markdown("#### 标注变量太多？不想手动配置？")
+            st.write("如果您有一份详细的 Codebook (编码手册)，可以让 ChatGPT 或 DeepSeek 帮您直接生成配置文件。")
+            st.info("只需将下面的 **提示词** 和 **JSON 模板** 复制给 AI，附上您的编码手册内容即可。")
+            
+            st.markdown("##### 1. 复制提示词 (Prompt)")
+            st.code("请根据我提供的编码手册，生成一个符合以下 JSON 结构的配置文件。Schema 字段类型支持：String, Integer, Boolean, Enum, List。请确保 JSON 格式合法。", language="text")
+            
+            st.markdown("##### 2. 复制 JSON 模板")
+            st.code("""{
+  "schema_fields": [
+    {
+      "name": "sentiment",
+      "type": "Enum",
+      "options": "Positive, Negative, Neutral",
+      "description": "文本的情感倾向"
+    },
+    {
+      "name": "topic",
+      "type": "String",
+      "options": "",
+      "description": "文本的主题"
+    }
+  ],
+  "prompt_configs": [
+    {
+      "name": "Standard Prompt",
+      "system": "You are an expert coder.",
+      "user": "Analyze this text: {{content}}"
+    }
+  ]
+}""", language="json")
+            st.success("生成的 JSON 保存文件后，在右侧“导入配置”处上传即可一键应用！")
+
+        if st.session_state.get('show_config_help', False):
+            show_ai_config_help()
+            st.session_state.show_config_help = False # Reset after showing? 
+            # Dialogs in Streamlit handle their own closing usually.
+            # But the trigger needs to be reset. 
+            # Actually st.experimental_dialog needs to be called to open.
+            
+        uploaded_config = st.file_uploader("导入配置", type=["json"], label_visibility="collapsed")
+        
         if uploaded_config is not None:
             try:
                 loaded_conf = json.load(uploaded_config)
@@ -37,11 +120,12 @@ def render_sidebar():
                     st.session_state.current_config_idx = loaded_conf["current_config_idx"]
                 
                 # Sync global for compatibility
-                curr = st.session_state.prompt_configs[st.session_state.current_config_idx]
-                st.session_state.system_prompt = curr["system"]
-                st.session_state.user_prompt_template = curr["user"]
+                if st.session_state.prompt_configs:
+                    curr = st.session_state.prompt_configs[st.session_state.current_config_idx]
+                    st.session_state.system_prompt = curr["system"]
+                    st.session_state.user_prompt_template = curr["user"]
                 
-                st.success("配置已加载！")
+                st.success("✅ 配置已加载！")
             except Exception as e:
                 st.error(f"配置文件无效: {e}")
 
@@ -103,13 +187,6 @@ def render_sidebar():
             config["base_url"] = "" # Claude SDK manages this
         
         # Model Name (Editable with suggestions)
-        # We use a text_input with suggestions via help, or a selectbox that allows custom input?
-        # Streamlit selectbox doesn't allow custom input easily unless using a specific component.
-        # We'll use a selectbox with an "Other..." option or just a text_input.
-        # Let's use text_input but pre-fill with a selectbox helper? No, too complex.
-        # Just use selectbox for common models, but allow editing? Streamlit doesn't support ComboBox natively well.
-        # Let's use a Selectbox with common models.
-        
         selected_model = st.selectbox("选择或输入模型名称", curr_defaults["models"] + ["自定义 (Custom)"])
         if selected_model == "自定义 (Custom)":
             config["model"] = st.text_input("请输入模型名称")

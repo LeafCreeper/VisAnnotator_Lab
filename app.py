@@ -70,7 +70,7 @@ def main():
         render_data_tab()
 
     with tab2:
-        render_schema_tab()
+        render_schema_tab(config)
 
     with tab3:
         render_playground_tab(config)
