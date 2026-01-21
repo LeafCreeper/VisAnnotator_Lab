@@ -1,29 +1,38 @@
 import trueskill
 import random
 
-def init_ratings(indices):
+def init_ratings(indices, fields):
     """
-    Initialize TrueSkill ratings for a list of document indices.
+    Initialize TrueSkill ratings for a list of document indices and fields.
+    Returns: {index: {field_name: Rating()}}
     """
-    return {idx: trueskill.Rating() for idx in indices}
+    ratings = {}
+    for idx in indices:
+        ratings[idx] = {f["name"]: trueskill.Rating() for f in fields}
+    return ratings
 
-def update_comparison(ratings, item_a_idx, item_b_idx, winner=None):
+def update_comparison_multi(ratings, item_a_idx, item_b_idx, winners_map):
     """
-    Update ratings based on comparison.
-    winner: 'a', 'b', or 'draw'
+    Update ratings based on comparison results for multiple fields.
+    winners_map: {field_name: 'a' | 'b' | 'draw'}
     """
-    rating_a = ratings[item_a_idx]
-    rating_b = ratings[item_b_idx]
-    
-    if winner == 'a':
-        new_a, new_b = trueskill.rate_1vs1(rating_a, rating_b)
-    elif winner == 'b':
-        new_b, new_a = trueskill.rate_1vs1(rating_b, rating_a)
-    else: # draw
-        new_a, new_b = trueskill.rate_1vs1(rating_a, rating_b, drawn=True)
+    for field, winner in winners_map.items():
+        if field not in ratings[item_a_idx]:
+            continue
+            
+        rating_a = ratings[item_a_idx][field]
+        rating_b = ratings[item_b_idx][field]
         
-    ratings[item_a_idx] = new_a
-    ratings[item_b_idx] = new_b
+        if winner == 'a':
+            new_a, new_b = trueskill.rate_1vs1(rating_a, rating_b)
+        elif winner == 'b':
+            new_b, new_a = trueskill.rate_1vs1(rating_b, rating_a)
+        else: # draw
+            new_a, new_b = trueskill.rate_1vs1(rating_a, rating_b, drawn=True)
+            
+        ratings[item_a_idx][field] = new_a
+        ratings[item_b_idx][field] = new_b
+        
     return ratings
 
 def generate_pairs(indices, num_pairs):

@@ -6,6 +6,7 @@ import time
 from src.logic.llm import run_batch_annotation, run_trueskill_annotation
 from src.logic.schema import convert_ui_fields_to_schema
 from src.logic.generator import generate_python_script
+from src.logic.cost import calculate_total_tokens
 from src.logic.chunking import is_chunkable_schema
 from src.logic.trueskill_logic import is_trueskill_applicable
 
@@ -28,12 +29,11 @@ def render_playground_tab(config):
     # --- 1. Mode Selection ---
     st.subheader("1. 选择运行模式")
     
-    # ... (rest of the mode selection code remains same, but I need to provide it for context)
-    mode = st.radio("模式", ["调试模式 (Debug / Sample)", "生产模式 (Full Batch)"], horizontal=True)
+    mode_selection = st.radio("模式", ["调试模式 (Debug / Sample)", "生产模式 (Full Batch)"], horizontal=True)
     
     target_df = None
     
-    if mode == "调试模式 (Debug / Sample)":
+    if mode_selection == "调试模式 (Debug / Sample)":
         st.info("在此模式下，仅抽取少量数据进行测试，用于验证 Prompt 和 Schema 是否符合预期。")
         
         c1, c2 = st.columns([1, 2])
@@ -72,10 +72,25 @@ def render_playground_tab(config):
         target_df = st.session_state.df.copy()
         st.markdown(f"**待处理数据总量: {len(target_df)} rows**")
         
-        # Cost Estimation (Rough)
-        avg_tokens = 500 # Assumption
-        total_est_tokens = len(target_df) * avg_tokens
-        st.caption(f"预计消耗 Token (估算): ~{total_est_tokens/1000:.1f}k (仅供参考，取决于文本长度)")
+        # Cost Estimation (New Logic)
+        with st.spinner("正在估算 Token 消耗..."):
+            cost_config = config.copy()
+            cost_config.update({
+                "annotation_mode": mode,
+                "chunk_target_var": st.session_state.chunk_target_var,
+                "max_chunk_len": st.session_state.max_chunk_len,
+                "num_comparisons_per_item": st.session_state.num_comparisons_per_item,
+                "schema_fields": st.session_state.schema_fields
+            })
+            
+            est_tokens = calculate_total_tokens(
+                target_df, 
+                st.session_state.system_prompt, 
+                st.session_state.user_prompt_template, 
+                cost_config
+            )
+            
+        st.info(f"💰 预计消耗 Token: **~{est_tokens:,}**")
 
     # --- 2. Run Annotation ---
     st.markdown("---")
@@ -97,6 +112,19 @@ def render_playground_tab(config):
     run_btn = st.button("🚀 开始运行任务", type="primary")
     
     if run_btn:
+        # --- Pre-run Checks ---
+        if mode == "Chunking" and not is_chunkable_schema(st.session_state.schema_fields):
+             st.error("❌ 当前 Schema 不支持分块处理。请修改 Schema 或关闭分块模式。")
+             st.stop()
+
+        if mode == "TrueSkill" and not is_trueskill_applicable(st.session_state.schema_fields):
+             st.error("❌ 当前 Schema 不支持 TrueSkill 比较。请确保 Schema 仅包含 Integer 类型变量。")
+             st.stop()
+
+        if mode == "TrueSkill" and len(target_df) < 2:
+            st.error("❌ TrueSkill 模式至少需要 2 条数据进行比较。当前数据量不足。")
+            st.stop()
+            
         schema = convert_ui_fields_to_schema(st.session_state.schema_fields)
         
         # Progress UI

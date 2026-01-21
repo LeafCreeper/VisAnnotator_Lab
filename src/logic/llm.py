@@ -249,12 +249,12 @@ async def run_batch_annotation(df, system_prompt, user_tmpl, schema, schema_fiel
 
 async def run_trueskill_annotation(df, system_prompt, user_tmpl, schema_fields, config, progress_callback=None):
     """
-    Orchestrates TrueSkill comparisons.
+    Orchestrates TrueSkill comparisons for MULTIPLE variables.
     """
-    from src.logic.trueskill_logic import init_ratings, generate_pairs, update_comparison
+    from src.logic.trueskill_logic import init_ratings, generate_pairs, update_comparison_multi
     
     indices = df.index.tolist()
-    ratings = init_ratings(indices)
+    ratings = init_ratings(indices, schema_fields)
     
     # Generate pairs: num_comparisons_per_item * total_items / 2
     num_items = len(indices)
@@ -270,13 +270,15 @@ async def run_trueskill_annotation(df, system_prompt, user_tmpl, schema_fields, 
     
     client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
+    # Get all variable names
+    var_names = [f["name"] for f in schema_fields]
+
     async def compare_task(pair):
         idx_a, idx_b = pair
         row_a = df.loc[idx_a].to_dict()
         row_b = df.loc[idx_b].to_dict()
         
         # Construct comparison prompt
-        # We use the user_tmpl as a base for each item
         def get_content(row):
             p = user_tmpl
             for col, val in row.items():
@@ -286,13 +288,19 @@ async def run_trueskill_annotation(df, system_prompt, user_tmpl, schema_fields, 
         content_a = get_content(row_a)
         content_b = get_content(row_b)
         
-        # Variable to compare
-        var_name = schema_fields[0]["name"]
+        vars_str = ", ".join([f"'{v}'" for v in var_names])
         
-        comparison_prompt = f"Please compare the following two items and decide which one has a higher score for '{var_name}'.\n\n"
+        comparison_prompt = f"Please compare the following two items and decide which one has a higher score for the following criteria: {vars_str}.\n\n"
         comparison_prompt += f"ITEM A:\n{content_a}\n\n"
         comparison_prompt += f"ITEM B:\n{content_b}\n\n"
-        comparison_prompt += f"Which one is higher? Respond with a JSON object: {{\"winner\": \"A\"}}, {{\"winner\": \"B\"}}, or {{\"winner\": \"Draw\"}}."
+        
+        # Construct Expected JSON format example
+        ex_json = {}
+        for v in var_names:
+            ex_json[v] = "A (or B or Draw)"
+        ex_str = json.dumps(ex_json, indent=2)
+        
+        comparison_prompt += f"Which one is higher for each? Respond with a VALID JSON object mapping variable names to 'A', 'B', or 'Draw'.\nExample:\n{ex_str}"
 
         async with sem:
             try:
@@ -308,41 +316,54 @@ async def run_trueskill_annotation(df, system_prompt, user_tmpl, schema_fields, 
                 )
                 content = response.choices[0].message.content
                 parsed = json.loads(content)
-                winner_val = parsed.get("winner", "Draw").upper()
                 
-                winner = 'draw'
-                if winner_val == 'A': winner = 'a'
-                elif winner_val == 'B': winner = 'b'
+                # Extract winners for each var
+                winners = {}
+                for v in var_names:
+                    # Robust extraction
+                    val = parsed.get(v, "Draw")
+                    if isinstance(val, dict): # Handle nested {"winner": "A"} case
+                        val = val.get("winner", "Draw")
+                    
+                    val = str(val).upper().strip()
+                    if 'A' in val: winner = 'a'
+                    elif 'B' in val: winner = 'b'
+                    else: winner = 'draw'
+                    winners[v] = winner
                 
                 if progress_callback:
                     progress_callback()
                 
-                return (idx_a, idx_b, winner)
+                return (idx_a, idx_b, winners)
             except Exception as e:
+                # Log error or just return all draws?
                 if progress_callback:
                     progress_callback()
-                return (idx_a, idx_b, 'draw')
+                # Return draws for all
+                return (idx_a, idx_b, {v: 'draw' for v in var_names})
 
     tasks = [compare_task(p) for p in pairs]
     results = await asyncio.gather(*tasks)
     
     # Update ratings
-    for idx_a, idx_b, winner in results:
-        update_comparison(ratings, idx_a, idx_b, winner)
+    for idx_a, idx_b, winners_map in results:
+        update_comparison_multi(ratings, idx_a, idx_b, winners_map)
         
     # Convert ratings to a list of results
     final_results = []
     for idx in indices:
+        res_parsed = {}
+        for v in var_names:
+            r = ratings[idx][v]
+            res_parsed[f"{v}_trueskill_mu"] = r.mu
+            res_parsed[f"{v}_trueskill_sigma"] = r.sigma
+            res_parsed[v] = round(r.mu, 2)
+            
         final_results.append({
             "index": idx,
             "status": "success",
-            "parsed": {
-                f"{var_name}_trueskill_mu": ratings[idx].mu,
-                f"{var_name}_trueskill_sigma": ratings[idx].sigma,
-                # Optionally map to some score, but mu is the standard mean rating
-                var_name: round(ratings[idx].mu, 2)
-            },
-            "raw": "TrueSkill Rating"
+            "parsed": res_parsed,
+            "raw": "TrueSkill Multi-Variable"
         })
         
     return final_results

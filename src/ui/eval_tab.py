@@ -5,6 +5,7 @@ from src.logic.llm import run_batch_annotation, run_trueskill_annotation
 from src.logic.schema import convert_ui_fields_to_schema
 from src.logic.metrics import calculate_metrics
 from src.logic.trueskill_logic import is_trueskill_applicable
+from src.logic.chunking import is_chunkable_schema
 
 def render_eval_tab(config):
     st.header("评估与信度 (Evaluation & Reliability)")
@@ -195,7 +196,21 @@ def render_eval_tab(config):
         )
         
         if st.button("🚀 运行实验 (Run Experiments)", type="primary"):
+            # --- Pre-run Checks ---
             val_df = st.session_state.df.loc[st.session_state.validation_indices].copy()
+            
+            if mode == "Chunking" and not is_chunkable_schema(st.session_state.schema_fields):
+                 st.error("❌ 当前 Schema 不支持分块处理。")
+                 st.stop()
+
+            if mode == "TrueSkill" and not is_trueskill_applicable(st.session_state.schema_fields):
+                 st.error("❌ 当前 Schema 不支持 TrueSkill 比较。")
+                 st.stop()
+            
+            if mode == "TrueSkill" and len(val_df) < 2:
+                st.error("❌ TrueSkill 模式至少需要 2 条验证集数据进行比较。")
+                st.stop()
+
             schema = convert_ui_fields_to_schema(st.session_state.schema_fields)
             
             progress_bar = st.progress(0)

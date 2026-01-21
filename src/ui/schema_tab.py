@@ -335,7 +335,14 @@ def render_schema_tab(config):
             
             # Run Button
             if st.button("▶️ 运行测试 (Run Batch Test)", type="primary", disabled=len(target_indices)==0):
-                if not config.get("api_key"):
+                # --- Mode Specific Validation ---
+                if mode == "TrueSkill" and len(target_indices) < 2:
+                    st.error("❌ TrueSkill 模式至少需要 2 条样本进行比较。")
+                elif mode == "Chunking" and not is_chunkable_schema(st.session_state.schema_fields):
+                    st.error("❌ 当前 Schema 不支持分块处理。")
+                elif mode == "TrueSkill" and not is_trueskill_applicable(st.session_state.schema_fields):
+                    st.error("❌ 当前 Schema 不支持 TrueSkill 比较。")
+                elif not config.get("api_key"):
                     st.error("请先配置 API Key")
                 else:
                     with st.spinner(f"正在处理 {len(target_indices)} 条样本..."):
