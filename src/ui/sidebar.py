@@ -105,8 +105,17 @@ def render_sidebar():
             # Dialogs in Streamlit handle their own closing usually.
             # But the trigger needs to be reset. 
             # Actually st.experimental_dialog needs to be called to open.
-            
-        uploaded_config = st.file_uploader("导入配置", type=["json"], label_visibility="collapsed")
+        
+        # Initialize uploader key if not present
+        if "config_uploader_key" not in st.session_state:
+            st.session_state.config_uploader_key = 0
+
+        uploaded_config = st.file_uploader(
+            "导入配置", 
+            type=["json"], 
+            label_visibility="collapsed",
+            key=f"uploader_{st.session_state.config_uploader_key}"
+        )
         
         if uploaded_config is not None:
             try:
@@ -134,8 +143,22 @@ def render_sidebar():
                     curr = st.session_state.prompt_configs[st.session_state.current_config_idx]
                     st.session_state.system_prompt = curr["system"]
                     st.session_state.user_prompt_template = curr["user"]
+                    
+                    # --- FIX: Sync Prompt Widgets ---
+                    if "sys_prompt_area" in st.session_state:
+                         st.session_state["sys_prompt_area"] = curr["system"]
+                    if "user_prompt_area" in st.session_state:
+                         st.session_state["user_prompt_area"] = curr["user"]
+                    if "cfg_name_input" in st.session_state:
+                         st.session_state["cfg_name_input"] = curr["name"]
+                    if "config_selector" in st.session_state:
+                        st.session_state["config_selector"] = f"{st.session_state.current_config_idx}: {curr['name']}"
                 
-                st.success("✅ 配置已加载！")
+                # Increment key to reset uploader on next rerun
+                st.session_state.config_uploader_key += 1
+                st.toast("✅ 配置已成功加载！", icon="🎉")
+                st.rerun()
+                
             except Exception as e:
                 st.error(f"配置文件无效: {e}")
 
