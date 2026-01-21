@@ -114,6 +114,16 @@ def render_sidebar():
                 # Update Session State
                 if "schema_fields" in loaded_conf:
                     st.session_state.schema_fields = loaded_conf["schema_fields"]
+                    
+                    # --- FIX: Sync Widget State ---
+                    # Explicitly update the text_input widget keys to match the imported data.
+                    # This ensures the UI reflects the new session state immediately.
+                    for i, field in enumerate(st.session_state.schema_fields):
+                        st.session_state[f"field_name_{i}"] = field.get("name", "")
+                        st.session_state[f"field_type_{i}"] = field.get("type", "String")
+                        st.session_state[f"field_opts_{i}"] = field.get("options", "")
+                        st.session_state[f"field_desc_{i}"] = field.get("description", "")
+                
                 if "prompt_configs" in loaded_conf:
                     st.session_state.prompt_configs = loaded_conf["prompt_configs"]
                 if "current_config_idx" in loaded_conf:
