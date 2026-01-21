@@ -1,12 +1,20 @@
 import streamlit as st
 import pandas as pd
 import asyncio
-from src.logic.llm import run_batch_annotation
+from src.logic.llm import run_batch_annotation, run_trueskill_annotation
 from src.logic.schema import convert_ui_fields_to_schema
 from src.logic.metrics import calculate_metrics
+from src.logic.trueskill_logic import is_trueskill_applicable
 
 def render_eval_tab(config):
     st.header("评估与信度 (Evaluation & Reliability)")
+    
+    # Check Mode
+    mode = st.session_state.get("annotation_mode", "Standard")
+    
+    if mode == "TrueSkill":
+        st.warning("⚠️ 注意：当前处于 TrueSkill 模式。实验将运行两两比较并输出 TrueSkill Mu 值 (浮点数)。\n"
+                   "标准的准确率/Kappa 指标可能不适用（除非人工标注也是连续值或您手动分箱）。")
     
     if st.session_state.df is None:
         st.warning("请先上传数据。")
@@ -202,15 +210,30 @@ def render_eval_tab(config):
                 cfg_obj = next(c for c in all_configs if c["name"] == cfg_name)
                 
                 try:
+                    # Update config for execution
+                    config["annotation_mode"] = mode
+                    config["chunk_target_var"] = st.session_state.chunk_target_var
+                    config["max_chunk_len"] = st.session_state.max_chunk_len
+                    config["num_comparisons_per_item"] = st.session_state.num_comparisons_per_item
+
                     # Run Batch
-                    results = asyncio.run(run_batch_annotation(
-                        val_df,
-                        cfg_obj["system"],
-                        cfg_obj["user"],
-                        schema,
-                        st.session_state.schema_fields,
-                        config
-                    ))
+                    if mode == "TrueSkill" and is_trueskill_applicable(st.session_state.schema_fields):
+                        results = asyncio.run(run_trueskill_annotation(
+                            val_df,
+                            cfg_obj["system"],
+                            cfg_obj["user"],
+                            st.session_state.schema_fields,
+                            config
+                        ))
+                    else:
+                        results = asyncio.run(run_batch_annotation(
+                            val_df,
+                            cfg_obj["system"],
+                            cfg_obj["user"],
+                            schema,
+                            st.session_state.schema_fields,
+                            config
+                        ))
                     
                     # Store processed results
                     results_map = {res["index"]: res for res in results}

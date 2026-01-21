@@ -4,7 +4,9 @@ import asyncio
 import pandas as pd
 import re
 from src.logic.schema import convert_ui_fields_to_schema
-from src.logic.llm import call_llm_batch
+from src.logic.llm import call_llm_batch, run_batch_annotation, run_trueskill_annotation
+from src.logic.trueskill_logic import is_trueskill_applicable
+from src.logic.chunking import is_chunkable_schema
 
 def render_schema_tab(config):
     st.header("定义输出结构 (Schema)")
@@ -340,17 +342,29 @@ def render_schema_tab(config):
                         # Prepare Schema
                         schema = convert_ui_fields_to_schema(st.session_state.schema_fields)
                         
-                        # Prepare data
-                        rows_data = [st.session_state.df.loc[i].to_dict() for i in target_indices]
+                        # Prepare data (subset df)
+                        subset_df = st.session_state.df.loc[target_indices].copy()
                         
                         sys_p = current_config["system"]
                         user_p = current_config["user"]
                         
+                        # Inject config variables for Chunking
+                        config["annotation_mode"] = mode
+                        config["chunk_target_var"] = st.session_state.chunk_target_var
+                        config["max_chunk_len"] = st.session_state.max_chunk_len
+                        config["num_comparisons_per_item"] = st.session_state.num_comparisons_per_item
+                        
                         # Run Async
                         try:
-                            results = asyncio.run(call_llm_batch(
-                                target_indices, rows_data, sys_p, user_p, schema, config
-                            ))
+                            if mode == "TrueSkill" and is_trueskill_applicable(st.session_state.schema_fields):
+                                results = asyncio.run(run_trueskill_annotation(
+                                    subset_df, sys_p, user_p, st.session_state.schema_fields, config
+                                ))
+                            else:
+                                # Standard or Chunking (handled inside run_batch_annotation)
+                                results = asyncio.run(run_batch_annotation(
+                                    subset_df, sys_p, user_p, schema, st.session_state.schema_fields, config
+                                ))
                             
                             st.session_state.last_test_results = results
                             st.session_state.last_test_indices = target_indices # Store indices to check if we are stale
