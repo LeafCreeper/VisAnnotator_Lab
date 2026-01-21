@@ -207,6 +207,31 @@ def render_sidebar():
             config["batch_size"] = st.number_input("单次请求条数", 1, 20, 1, help="一次 API 请求处理多少条数据")
         
         st.markdown("---")
+        
+        # --- Advanced Settings ---
+        @st.dialog("⚙️ 高级设置 (Advanced Settings)")
+        def show_advanced_settings():
+            st.subheader("分块处理逻辑 (Chunking)")
+            st.session_state.chunk_enabled = st.toggle("开启长文档分块", value=st.session_state.chunk_enabled, help="当 Schema 仅包含一个 List 变量时有效。")
+            if st.session_state.chunk_enabled:
+                st.session_state.max_chunk_len = st.number_input("分块长度上限", 100, 5000, st.session_state.max_chunk_len)
+                st.info("💡 系统会自动寻找最接近此长度的句号、问号或感叹号进行分割。")
+            
+            st.divider()
+            
+            st.subheader("TrueSkill 标注设置")
+            st.session_state.trueskill_enabled = st.toggle("开启 TrueSkill 比较标注", value=st.session_state.trueskill_enabled, help="当 Schema 仅包含 Integer 变量时有效。")
+            if st.session_state.trueskill_enabled:
+                st.session_state.num_comparisons_per_item = st.number_input("每条数据参与比较次数", 1, 20, st.session_state.num_comparisons_per_item)
+                st.warning("⚠️ 开启后，系统将通过两两比较来确定分值。这会挑战现有的单条标注流程。")
+            
+            if st.button("确定", use_container_width=True):
+                st.rerun()
+
+        if st.button("🛠️ 高级设置", use_container_width=True):
+            show_advanced_settings()
+
+        st.markdown("---")
         if not config["api_key"]:
             st.warning("请输入 API Key 以开始使用。")
         

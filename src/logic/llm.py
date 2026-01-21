@@ -1,6 +1,8 @@
 import json
 import asyncio
 from openai import AsyncOpenAI
+from src.logic.chunking import split_text_by_length, is_chunkable_schema
+
 # Import Anthropic conditionally or globally (since we added it to requirements)
 try:
     from anthropic import AsyncAnthropic
@@ -142,7 +144,7 @@ async def call_llm_batch(indices, rows_data, system_prompt, user_tmpl, schema, c
         except Exception as e:
             return [{"index": idx, "status": "error", "error": str(e)} for idx in indices]
 
-async def run_batch_annotation(df, system_prompt, user_tmpl, schema, config, progress_callback=None):
+async def run_batch_annotation(df, system_prompt, user_tmpl, schema, schema_fields, config, progress_callback=None):
     """
     Orchestrates the batch processing with semaphore for concurrency.
     """
@@ -157,17 +159,68 @@ async def run_batch_annotation(df, system_prompt, user_tmpl, schema, config, pro
 
     async def sem_task(chunk_indices):
         async with sem:
-            chunk_rows = [df.loc[i].to_dict() for i in chunk_indices]
+            chunk_rows = []
             
-            res = await call_llm_batch(
-                chunk_indices, chunk_rows, 
-                system_prompt, user_tmpl, schema,
-                config
-            )
+            # --- Check if Chunking is applicable and enabled ---
+            is_chunking = config.get("chunk_enabled", False) and is_chunkable_schema(schema_fields)
             
-            if progress_callback:
-                progress_callback()
-            return res
+            if is_chunking:
+                # If chunking, we process one document at a time for simplicity in merging
+                all_results = []
+                for idx in chunk_indices:
+                    row_dict = df.loc[idx].to_dict()
+                    import re
+                    used_cols = re.findall(r"\{\{(.*?)\}\}", user_tmpl)
+                    
+                    doc_text = ""
+                    if used_cols:
+                        doc_text = str(row_dict.get(used_cols[0], ""))
+                    
+                    text_chunks = split_text_by_length(doc_text, config.get("max_chunk_len", 600))
+                    
+                    chunk_sub_results = []
+                    for sub_idx, text_chunk in enumerate(text_chunks):
+                        sub_row = row_dict.copy()
+                        sub_row[used_cols[0]] = text_chunk
+                        
+                        sub_res = await call_llm_batch(
+                            [idx], [sub_row],
+                            system_prompt, user_tmpl, schema,
+                            config
+                        )
+                        chunk_sub_results.append(sub_res[0])
+                    
+                    # Merge results
+                    list_key = schema_fields[0]["name"]
+                    merged_list = []
+                    raw_combined = ""
+                    for sr in chunk_sub_results:
+                        if sr["status"] == "success":
+                            merged_list.extend(sr["parsed"].get(list_key, []))
+                            raw_combined += "\n---\n" + sr["raw"]
+                    
+                    all_results.append({
+                        "index": idx,
+                        "status": "success" if chunk_sub_results else "error",
+                        "raw": raw_combined,
+                        "parsed": {list_key: merged_list}
+                    })
+                
+                if progress_callback:
+                    progress_callback()
+                return all_results
+            else:
+                chunk_rows = [df.loc[i].to_dict() for i in chunk_indices]
+                
+                res = await call_llm_batch(
+                    chunk_indices, chunk_rows, 
+                    system_prompt, user_tmpl, schema,
+                    config
+                )
+                
+                if progress_callback:
+                    progress_callback()
+                return res
 
     for chunk_indices in chunker(indices, batch_size):
         tasks.append(sem_task(chunk_indices))
@@ -176,3 +229,103 @@ async def run_batch_annotation(df, system_prompt, user_tmpl, schema, config, pro
     flat_results = [item for sublist in results_nested for item in sublist]
     
     return flat_results
+
+async def run_trueskill_annotation(df, system_prompt, user_tmpl, schema_fields, config, progress_callback=None):
+    """
+    Orchestrates TrueSkill comparisons.
+    """
+    from src.logic.trueskill_logic import init_ratings, generate_pairs, update_comparison
+    
+    indices = df.index.tolist()
+    ratings = init_ratings(indices)
+    
+    # Generate pairs: num_comparisons_per_item * total_items / 2
+    num_items = len(indices)
+    total_comparisons = (config.get("num_comparisons_per_item", 3) * num_items) // 2
+    pairs = generate_pairs(indices, total_comparisons)
+    
+    sem = asyncio.Semaphore(config["concurrency"])
+    api_key = config["api_key"]
+    base_url = config.get("base_url")
+    model = config["model"]
+    temperature = config["temperature"]
+    max_tokens = config["max_tokens"]
+    
+    client = AsyncOpenAI(api_key=api_key, base_url=base_url)
+
+    async def compare_task(pair):
+        idx_a, idx_b = pair
+        row_a = df.loc[idx_a].to_dict()
+        row_b = df.loc[idx_b].to_dict()
+        
+        # Construct comparison prompt
+        # We use the user_tmpl as a base for each item
+        def get_content(row):
+            p = user_tmpl
+            for col, val in row.items():
+                p = p.replace(f"{{{{{col}}}}}", str(val))
+            return p
+        
+        content_a = get_content(row_a)
+        content_b = get_content(row_b)
+        
+        # Variable to compare
+        var_name = schema_fields[0]["name"]
+        
+        comparison_prompt = f"Please compare the following two items and decide which one has a higher score for '{var_name}'.\n\n"
+        comparison_prompt += f"ITEM A:\n{content_a}\n\n"
+        comparison_prompt += f"ITEM B:\n{content_b}\n\n"
+        comparison_prompt += f"Which one is higher? Respond with a JSON object: {{\"winner\": \"A\"}}, {{\"winner\": \"B\"}}, or {{\"winner\": \"Draw\"}}."
+
+        async with sem:
+            try:
+                response = await client.chat.completions.create(
+                    model=model,
+                    messages=[
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": comparison_prompt}
+                    ],
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    response_format={"type": "json_object"}
+                )
+                content = response.choices[0].message.content
+                parsed = json.loads(content)
+                winner_val = parsed.get("winner", "Draw").upper()
+                
+                winner = 'draw'
+                if winner_val == 'A': winner = 'a'
+                elif winner_val == 'B': winner = 'b'
+                
+                if progress_callback:
+                    progress_callback()
+                
+                return (idx_a, idx_b, winner)
+            except Exception as e:
+                if progress_callback:
+                    progress_callback()
+                return (idx_a, idx_b, 'draw')
+
+    tasks = [compare_task(p) for p in pairs]
+    results = await asyncio.gather(*tasks)
+    
+    # Update ratings
+    for idx_a, idx_b, winner in results:
+        update_comparison(ratings, idx_a, idx_b, winner)
+        
+    # Convert ratings to a list of results
+    final_results = []
+    for idx in indices:
+        final_results.append({
+            "index": idx,
+            "status": "success",
+            "parsed": {
+                f"{var_name}_trueskill_mu": ratings[idx].mu,
+                f"{var_name}_trueskill_sigma": ratings[idx].sigma,
+                # Optionally map to some score, but mu is the standard mean rating
+                var_name: round(ratings[idx].mu, 2)
+            },
+            "raw": "TrueSkill Rating"
+        })
+        
+    return final_results

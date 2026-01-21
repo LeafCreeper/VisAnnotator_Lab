@@ -59,8 +59,7 @@ def render_eval_tab(config):
                 st.session_state.validation_indices = []
                 st.session_state.human_annotations = {}
                 st.rerun()
-            
-            st.divider()
+
             
             # --- New Feature: Import Ground Truth ---
             with st.expander("📂 从数据列导入正确答案 (Import Ground Truth)", expanded=False):
@@ -119,7 +118,6 @@ def render_eval_tab(config):
             
             display_col = st.selectbox("选择用于标注参考的文本列:", cols, index=default_idx)
             
-            st.divider()
 
             val_df = st.session_state.df.loc[st.session_state.validation_indices]
             schema_fields = st.session_state.schema_fields
@@ -210,6 +208,7 @@ def render_eval_tab(config):
                         cfg_obj["system"],
                         cfg_obj["user"],
                         schema,
+                        st.session_state.schema_fields,
                         config
                     ))
                     

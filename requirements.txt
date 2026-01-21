@@ -6,3 +6,4 @@ openpyxl
 plotly
 scikit-learn
 anthropic
+trueskill

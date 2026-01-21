@@ -33,6 +33,16 @@ if 'human_annotations' not in st.session_state:
 if 'has_seen_tutorial' not in st.session_state:
     st.session_state.has_seen_tutorial = False
 
+# --- Advanced Settings State ---
+if 'chunk_enabled' not in st.session_state:
+    st.session_state.chunk_enabled = False
+if 'max_chunk_len' not in st.session_state:
+    st.session_state.max_chunk_len = 600
+if 'trueskill_enabled' not in st.session_state:
+    st.session_state.trueskill_enabled = False
+if 'num_comparisons_per_item' not in st.session_state:
+    st.session_state.num_comparisons_per_item = 3
+
 # --- New: Multi-Prompt Configuration State ---
 if 'prompt_configs' not in st.session_state:
     # Migrate old state if exists, else default

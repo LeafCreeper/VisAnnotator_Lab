@@ -3,13 +3,24 @@ import pandas as pd
 import asyncio
 import math
 import time
-from src.logic.llm import run_batch_annotation
+from src.logic.llm import run_batch_annotation, run_trueskill_annotation
 from src.logic.schema import convert_ui_fields_to_schema
 from src.logic.generator import generate_python_script
+from src.logic.chunking import is_chunkable_schema
+from src.logic.trueskill_logic import is_trueskill_applicable
 
 def render_playground_tab(config):
     st.header("标注执行台 (Annotation Runner)")
     
+    # --- Check Advanced Settings Conflicts ---
+    if st.session_state.get("chunk_enabled") and not is_chunkable_schema(st.session_state.schema_fields):
+        st.error("❌ 当前 Schema 不支持分块处理。分块处理仅对‘仅有一个 List 类型变量’的 Schema 开放。")
+    
+    if st.session_state.get("trueskill_enabled") and not is_trueskill_applicable(st.session_state.schema_fields):
+        st.error("❌ 当前 Schema 不支持 TrueSkill 比较。TrueSkill 仅对‘仅有 Integer 类型变量’的 Schema 开放。")
+        if st.session_state.get("trueskill_enabled") and len(st.session_state.schema_fields) > 1:
+             st.warning("提示：目前 TrueSkill 仅支持单变量比较，请简化您的 Schema。")
+
     if st.session_state.df is None:
         st.warning("请先在“数据上传”标签页上传数据。")
         return
@@ -17,6 +28,7 @@ def render_playground_tab(config):
     # --- 1. Mode Selection ---
     st.subheader("1. 选择运行模式")
     
+    # ... (rest of the mode selection code remains same, but I need to provide it for context)
     mode = st.radio("模式", ["调试模式 (Debug / Sample)", "生产模式 (Full Batch)"], horizontal=True)
     
     target_df = None
@@ -70,8 +82,14 @@ def render_playground_tab(config):
     st.subheader("2. 执行标注")
     
     if not config["api_key"]:
-        st.error("请在左侧栏输入 DeepSeek API Key。")
+        st.error("请在左侧栏输入 API Key。")
         return
+
+    # Add Info for Advanced Modes
+    if st.session_state.chunk_enabled and is_chunkable_schema(st.session_state.schema_fields):
+        st.info(f"ℹ️ **已开启长文档分块模式**。文档将按 {st.session_state.max_chunk_len} 长度进行拆分标注。")
+    if st.session_state.trueskill_enabled and is_trueskill_applicable(st.session_state.schema_fields):
+        st.info(f"ℹ️ **已开启 TrueSkill 比较模式**。系统将进行两两比较。")
 
     run_btn = st.button("🚀 开始运行任务", type="primary")
     
@@ -81,39 +99,57 @@ def render_playground_tab(config):
         # Progress UI
         progress_bar = st.progress(0)
         status_text = st.empty()
-        metrics_col1, metrics_col2 = st.columns(2)
         
-        # Calculate Batches
-        batch_size = config.get("batch_size", 1)
+        # Calculate Progress Steps
         total_rows = len(target_df)
-        total_batches = math.ceil(total_rows / batch_size)
-        completed_batches = 0
+        if st.session_state.trueskill_enabled and is_trueskill_applicable(st.session_state.schema_fields):
+            total_steps = (st.session_state.num_comparisons_per_item * total_rows) // 2
+        else:
+            batch_size = config.get("batch_size", 1)
+            total_steps = math.ceil(total_rows / batch_size)
         
+        completed_steps = 0
         start_time = time.time()
         
         def update_progress():
-            nonlocal completed_batches
-            completed_batches += 1
-            progress = min(completed_batches / total_batches, 1.0)
+            nonlocal completed_steps
+            completed_steps += 1
+            progress = min(completed_steps / total_steps, 1.0)
             progress_bar.progress(progress)
             
             elapsed = time.time() - start_time
-            avg_time_per_batch = elapsed / completed_batches if completed_batches > 0 else 0
-            remaining_batches = total_batches - completed_batches
-            est_remaining = remaining_batches * avg_time_per_batch
+            avg_time_per_step = elapsed / completed_steps if completed_steps > 0 else 0
+            remaining_steps = total_steps - completed_steps
+            est_remaining = remaining_steps * avg_time_per_step
             
-            status_text.markdown(f"**进度:** {completed_batches}/{total_batches} 批次 | **预计剩余时间:** {est_remaining:.1f}s")
+            status_text.markdown(f"**进度:** {completed_steps}/{total_steps} | **预计剩余时间:** {est_remaining:.1f}s")
 
         try:
-            with st.spinner("正在连接 DeepSeek API 进行标注..."):
-                results = asyncio.run(run_batch_annotation(
-                    target_df, 
-                    st.session_state.system_prompt, 
-                    st.session_state.user_prompt_template, 
-                    schema, 
-                    config,
-                    progress_callback=update_progress
-                ))
+            with st.spinner("正在调用 LLM 进行标注..."):
+                # Pass advanced settings into config for logic layer
+                config["chunk_enabled"] = st.session_state.chunk_enabled
+                config["max_chunk_len"] = st.session_state.max_chunk_len
+                config["num_comparisons_per_item"] = st.session_state.num_comparisons_per_item
+                
+                if st.session_state.trueskill_enabled and is_trueskill_applicable(st.session_state.schema_fields):
+                    results = asyncio.run(run_trueskill_annotation(
+                        target_df,
+                        st.session_state.system_prompt,
+                        st.session_state.user_prompt_template,
+                        st.session_state.schema_fields,
+                        config,
+                        progress_callback=update_progress
+                    ))
+                else:
+                    results = asyncio.run(run_batch_annotation(
+                        target_df, 
+                        st.session_state.system_prompt, 
+                        st.session_state.user_prompt_template, 
+                        schema, 
+                        st.session_state.schema_fields,
+                        config,
+                        progress_callback=update_progress
+                    ))
             
             status_text.success("✅ 标注任务完成！")
             
