@@ -116,6 +116,12 @@ def render_sidebar():
             label_visibility="collapsed",
             key=f"uploader_{st.session_state.config_uploader_key}"
         )
+
+        # 显示导入成功提示
+        if st.session_state.get('import_success_msg'):
+            st.success("✅ 配置已成功加载！")
+            # 标记为已显示，下次交互时将消失
+            st.session_state.import_success_msg = False
         
         if uploaded_config is not None:
             try:
@@ -125,8 +131,6 @@ def render_sidebar():
                     st.session_state.schema_fields = loaded_conf["schema_fields"]
                     
                     # --- FIX: Sync Widget State ---
-                    # Explicitly update the text_input widget keys to match the imported data.
-                    # This ensures the UI reflects the new session state immediately.
                     for i, field in enumerate(st.session_state.schema_fields):
                         st.session_state[f"field_name_{i}"] = field.get("name", "")
                         st.session_state[f"field_type_{i}"] = field.get("type", "String")
@@ -153,6 +157,9 @@ def render_sidebar():
                          st.session_state["cfg_name_input"] = curr["name"]
                     if "config_selector" in st.session_state:
                         st.session_state["config_selector"] = f"{st.session_state.current_config_idx}: {curr['name']}"
+                
+                # 设置成功标记
+                st.session_state.import_success_msg = True
                 
                 # Increment key to reset uploader on next rerun
                 st.session_state.config_uploader_key += 1
