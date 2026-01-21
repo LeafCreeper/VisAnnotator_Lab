@@ -162,26 +162,43 @@ async def run_batch_annotation(df, system_prompt, user_tmpl, schema, schema_fiel
             chunk_rows = []
             
             # --- Check if Chunking is applicable and enabled ---
-            is_chunking = config.get("chunk_enabled", False) and is_chunkable_schema(schema_fields)
+            # Check mode from config
+            mode = config.get("annotation_mode", "Standard")
+            is_chunking = (mode == "Chunking") and is_chunkable_schema(schema_fields)
             
             if is_chunking:
                 # If chunking, we process one document at a time for simplicity in merging
                 all_results = []
+                target_var = config.get("chunk_target_var")
+                
                 for idx in chunk_indices:
                     row_dict = df.loc[idx].to_dict()
-                    import re
-                    used_cols = re.findall(r"\{\{(.*?)\}\}", user_tmpl)
                     
+                    # Determine text to split
                     doc_text = ""
-                    if used_cols:
-                        doc_text = str(row_dict.get(used_cols[0], ""))
+                    if target_var and target_var in row_dict:
+                         doc_text = str(row_dict[target_var])
+                    else:
+                        # Fallback: Try to find first used col in prompt
+                        import re
+                        used_cols = re.findall(r"\{\{(.*?)\}\}", user_tmpl)
+                        if used_cols:
+                            target_var = used_cols[0] # Auto-select first if not specified
+                            doc_text = str(row_dict.get(target_var, ""))
                     
-                    text_chunks = split_text_by_length(doc_text, config.get("max_chunk_len", 600))
+                    if not doc_text:
+                        # No text to chunk, treat as empty or error?
+                        # Treat as single empty chunk
+                        text_chunks = [""]
+                    else:
+                        text_chunks = split_text_by_length(doc_text, config.get("max_chunk_len", 600))
                     
                     chunk_sub_results = []
                     for sub_idx, text_chunk in enumerate(text_chunks):
                         sub_row = row_dict.copy()
-                        sub_row[used_cols[0]] = text_chunk
+                        # Replace the target variable with the chunk
+                        if target_var:
+                            sub_row[target_var] = text_chunk
                         
                         sub_res = await call_llm_batch(
                             [idx], [sub_row],

@@ -164,7 +164,47 @@ def render_schema_tab(config):
         
         # User Prompt & Variable Helpers
         st.subheader("用户提示词模板 (User Prompt)")
-        st.caption("在单次请求条数大于1时，每条待标注文本都会使得用户提示词被复制一次。")
+        
+        # --- Mode Specific UI ---
+        mode = st.session_state.get("annotation_mode", "Standard")
+        
+        if mode == "Chunking":
+            st.info("ℹ️ **分块模式**：请指定一个变量作为“长文本来源”。系统将对其进行切割，其他变量将在每个分块请求中保持不变。")
+            
+            # Extract variables from current user prompt
+            current_user_p = current_config["user"]
+            vars_in_prompt = re.findall(r"\{\{(.*?)\}\}", current_user_p)
+            
+            if not vars_in_prompt:
+                st.warning("⚠️ 请在下方 User Prompt 中至少插入一个变量 (如 {{content}})。")
+            else:
+                # Select Chunk Target
+                # Default to previously saved or first one
+                default_idx = 0
+                if st.session_state.chunk_target_var in vars_in_prompt:
+                    default_idx = vars_in_prompt.index(st.session_state.chunk_target_var)
+                
+                selected_var = st.selectbox(
+                    "✂️ 选择要分块的变量 (Chunking Target)",
+                    vars_in_prompt,
+                    index=default_idx,
+                    help="此变量的内容若超过长度限制，将被切分。"
+                )
+                st.session_state.chunk_target_var = selected_var
+
+        elif mode == "TrueSkill":
+            st.info("ℹ️ **TrueSkill 模式**：User Prompt 将用于**渲染单条数据**。系统会自动构建 A/B 比较的 Prompt。")
+            st.caption("例如：User Prompt 写为 `评论内容: {{text}}`。系统会自动生成 `Compare Item A (评论内容: xxx) vs Item B (评论内容: yyy)`。")
+            
+            # Check Schema compliance
+            has_int = any(f["type"] == "Integer" for f in st.session_state.schema_fields)
+            if not has_int:
+                st.error("❌ TrueSkill 模式需要至少定义一个 Integer 类型的字段用于存储最终评分。")
+
+        # Standard Hints
+        if mode == "Standard":
+            st.caption("在单次请求条数大于1时，每条待标注文本都会使得用户提示词被复制一次。")
+
         st.caption("点击下方变量名即可插入到提示词末尾(jinja2语法)：")
         
         if st.session_state.df is not None:

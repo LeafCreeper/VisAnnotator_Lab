@@ -13,13 +13,13 @@ def render_playground_tab(config):
     st.header("标注执行台 (Annotation Runner)")
     
     # --- Check Advanced Settings Conflicts ---
-    if st.session_state.get("chunk_enabled") and not is_chunkable_schema(st.session_state.schema_fields):
+    mode = st.session_state.get("annotation_mode", "Standard")
+    
+    if mode == "Chunking" and not is_chunkable_schema(st.session_state.schema_fields):
         st.error("❌ 当前 Schema 不支持分块处理。分块处理仅对‘仅有一个 List 类型变量’的 Schema 开放。")
     
-    if st.session_state.get("trueskill_enabled") and not is_trueskill_applicable(st.session_state.schema_fields):
+    if mode == "TrueSkill" and not is_trueskill_applicable(st.session_state.schema_fields):
         st.error("❌ 当前 Schema 不支持 TrueSkill 比较。TrueSkill 仅对‘仅有 Integer 类型变量’的 Schema 开放。")
-        if st.session_state.get("trueskill_enabled") and len(st.session_state.schema_fields) > 1:
-             st.warning("提示：目前 TrueSkill 仅支持单变量比较，请简化您的 Schema。")
 
     if st.session_state.df is None:
         st.warning("请先在“数据上传”标签页上传数据。")
@@ -86,9 +86,12 @@ def render_playground_tab(config):
         return
 
     # Add Info for Advanced Modes
-    if st.session_state.chunk_enabled and is_chunkable_schema(st.session_state.schema_fields):
+    if mode == "Chunking" and is_chunkable_schema(st.session_state.schema_fields):
         st.info(f"ℹ️ **已开启长文档分块模式**。文档将按 {st.session_state.max_chunk_len} 长度进行拆分标注。")
-    if st.session_state.trueskill_enabled and is_trueskill_applicable(st.session_state.schema_fields):
+        if st.session_state.chunk_target_var:
+            st.caption(f"分块目标变量: `{st.session_state.chunk_target_var}`")
+    
+    if mode == "TrueSkill" and is_trueskill_applicable(st.session_state.schema_fields):
         st.info(f"ℹ️ **已开启 TrueSkill 比较模式**。系统将进行两两比较。")
 
     run_btn = st.button("🚀 开始运行任务", type="primary")
@@ -102,7 +105,7 @@ def render_playground_tab(config):
         
         # Calculate Progress Steps
         total_rows = len(target_df)
-        if st.session_state.trueskill_enabled and is_trueskill_applicable(st.session_state.schema_fields):
+        if mode == "TrueSkill" and is_trueskill_applicable(st.session_state.schema_fields):
             total_steps = (st.session_state.num_comparisons_per_item * total_rows) // 2
         else:
             batch_size = config.get("batch_size", 1)
@@ -127,11 +130,12 @@ def render_playground_tab(config):
         try:
             with st.spinner("正在调用 LLM 进行标注..."):
                 # Pass advanced settings into config for logic layer
-                config["chunk_enabled"] = st.session_state.chunk_enabled
+                config["annotation_mode"] = mode
                 config["max_chunk_len"] = st.session_state.max_chunk_len
                 config["num_comparisons_per_item"] = st.session_state.num_comparisons_per_item
+                config["chunk_target_var"] = st.session_state.chunk_target_var
                 
-                if st.session_state.trueskill_enabled and is_trueskill_applicable(st.session_state.schema_fields):
+                if mode == "TrueSkill" and is_trueskill_applicable(st.session_state.schema_fields):
                     results = asyncio.run(run_trueskill_annotation(
                         target_df,
                         st.session_state.system_prompt,

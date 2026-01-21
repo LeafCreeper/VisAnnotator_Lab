@@ -211,19 +211,48 @@ def render_sidebar():
         # --- Advanced Settings ---
         @st.dialog("⚙️ 高级设置 (Advanced Settings)")
         def show_advanced_settings():
-            st.subheader("分块处理逻辑 (Chunking)")
-            st.session_state.chunk_enabled = st.toggle("开启长文档分块", value=st.session_state.chunk_enabled, help="当 Schema 仅包含一个 List 变量时有效。")
-            if st.session_state.chunk_enabled:
-                st.session_state.max_chunk_len = st.number_input("分块长度上限", 100, 5000, st.session_state.max_chunk_len)
-                st.info("💡 系统会自动寻找最接近此长度的句号、问号或感叹号进行分割。")
+            st.subheader("标注模式选择 (Annotation Mode)")
+            
+            mode_options = ["标准模式 (Standard)", "长文档分块模式 (Chunking)", "TrueSkill 比较模式 (TrueSkill)"]
+            
+            # Map current state to index
+            current_mode = st.session_state.annotation_mode
+            if current_mode == "Chunking": idx = 1
+            elif current_mode == "TrueSkill": idx = 2
+            else: idx = 0
+            
+            selected_mode_label = st.radio("选择模式", mode_options, index=idx)
+            
+            # Update State based on selection
+            if "Standard" in selected_mode_label:
+                st.session_state.annotation_mode = "Standard"
+            elif "Chunking" in selected_mode_label:
+                st.session_state.annotation_mode = "Chunking"
+            elif "TrueSkill" in selected_mode_label:
+                st.session_state.annotation_mode = "TrueSkill"
             
             st.divider()
             
-            st.subheader("TrueSkill 标注设置")
-            st.session_state.trueskill_enabled = st.toggle("开启 TrueSkill 比较标注", value=st.session_state.trueskill_enabled, help="当 Schema 仅包含 Integer 变量时有效。")
-            if st.session_state.trueskill_enabled:
-                st.session_state.num_comparisons_per_item = st.number_input("每条数据参与比较次数", 1, 20, st.session_state.num_comparisons_per_item)
-                st.warning("⚠️ 开启后，系统将通过两两比较来确定分值。这会挑战现有的单条标注流程。")
+            # Contextual Settings
+            if st.session_state.annotation_mode == "Chunking":
+                st.subheader("分块设置")
+                st.session_state.max_chunk_len = st.number_input(
+                    "分块长度上限", 
+                    100, 5000, 
+                    st.session_state.max_chunk_len,
+                    help="系统会自动寻找最接近此长度的句号、问号或感叹号进行分割。"
+                )
+                st.info("💡 请在“提示词与Schema”页面选择具体要分块的变量。")
+                
+            elif st.session_state.annotation_mode == "TrueSkill":
+                st.subheader("TrueSkill 设置")
+                st.session_state.num_comparisons_per_item = st.number_input(
+                    "每条数据参与比较次数", 
+                    1, 20, 
+                    st.session_state.num_comparisons_per_item,
+                    help="增加比较次数会提高评分精度，但会消耗更多 Token。"
+                )
+                st.warning("⚠️ 此模式将改变提示词工程界面的逻辑：您只需定义单条数据的展示格式，系统会自动构建比较 Prompt。")
             
             if st.button("确定", use_container_width=True):
                 st.rerun()
