@@ -420,8 +420,17 @@ def render_schema_tab(config):
                         res = results_map[idx]
                         if res["status"] == "success":
                             parsed = res["parsed"]
-                            for k, v in parsed.items():
-                                flat_row[f"Output: {k}"] = v
+                            # Iterate over DEFINED schema fields to ensure columns exist
+                            for field in st.session_state.schema_fields:
+                                fname = field["name"]
+                                val = parsed.get(fname, None)
+                                
+                                # Convert list to string for safer display if needed
+                                if isinstance(val, list):
+                                    val = str(val)
+                                
+                                flat_row[f"Output: {fname}"] = val if val is not None else "(Missing)"
+                                
                             flat_row["_Status"] = "✅"
                         else:
                             flat_row["_Status"] = "❌ Error"

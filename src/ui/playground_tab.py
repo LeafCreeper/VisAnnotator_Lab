@@ -194,7 +194,15 @@ def render_playground_tab(config):
                 if index in results_map:
                     res = results_map[index]
                     if res["status"] == "success":
-                        row_data.update(res["parsed"])
+                        parsed = res["parsed"]
+                        # Robustly update row_data with all schema fields
+                        for field in st.session_state.schema_fields:
+                            fname = field["name"]
+                            val = parsed.get(fname, None)
+                            if isinstance(val, list):
+                                val = str(val)
+                            row_data[fname] = val if val is not None else None # None for empty
+                            
                         row_data["_raw_response"] = res["raw"]
                         row_data["_status"] = "success"
                     else:
