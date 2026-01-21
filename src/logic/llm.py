@@ -2,6 +2,8 @@ import json
 import asyncio
 from openai import AsyncOpenAI
 from src.logic.chunking import split_text_by_length, is_chunkable_schema
+import random
+
 
 # Import Anthropic conditionally or globally (since we added it to requirements)
 try:
@@ -247,21 +249,29 @@ async def run_batch_annotation(df, system_prompt, user_tmpl, schema, schema_fiel
     
     return flat_results
 
+
 async def run_trueskill_annotation(df, system_prompt, user_tmpl, schema_fields, config, progress_callback=None):
     """
-    Orchestrates TrueSkill comparisons for MULTIPLE variables.
+    Orchestrates TrueSkill comparisons for MULTIPLE variables using Batch Active Learning.
     """
-    from src.logic.trueskill_logic import init_ratings, generate_pairs, update_comparison_multi
+    # 保持原有的引用
+    from src.logic.trueskill_logic import init_ratings, update_comparison_multi
     
     indices = df.index.tolist()
     ratings = init_ratings(indices, schema_fields)
     
-    # Generate pairs: num_comparisons_per_item * total_items / 2
+    # 1. 计算总预算 (Total Budget)
     num_items = len(indices)
-    total_comparisons = (config.get("num_comparisons_per_item", 3) * num_items) // 2
-    pairs = generate_pairs(indices, total_comparisons)
+    # 默认每个 item 比较 3 次，总比较次数 = (3 * N) / 2
+    comparisons_per_item = config.get("num_comparisons_per_item", 3)
+    total_budget = (comparisons_per_item * num_items) // 2
     
-    sem = asyncio.Semaphore(config["concurrency"])
+    # 2. 配置并发相关
+    concurrency = config["concurrency"]
+    # 批次大小设为并发数，保证满载运行的同时，能尽可能快地进行下一轮分数更新
+    batch_size = concurrency 
+    
+    sem = asyncio.Semaphore(concurrency)
     api_key = config["api_key"]
     base_url = config.get("base_url")
     model = config["model"]
@@ -272,27 +282,43 @@ async def run_trueskill_annotation(df, system_prompt, user_tmpl, schema_fields, 
 
     # Get all variable names
     var_names = [f["name"] for f in schema_fields]
+    
+    # 记录已比较过的配对 (防止重复)
+    # 格式: tuple(sorted((idx_a, idx_b)))
+    played_pairs = set()
 
     async def compare_task(pair):
         idx_a, idx_b = pair
         row_a = df.loc[idx_a].to_dict()
         row_b = df.loc[idx_b].to_dict()
         
-        # Construct comparison prompt
+        # --- [改进 1] 消除位置偏见 (Position Bias Mitigation) ---
+        # 随机决定是否交换展示顺序
+        is_swapped = random.random() < 0.5
+        
+        if is_swapped:
+            # 视觉上交换，但数据源 row_a/row_b 变量本身不换
+            content_first = row_b
+            content_second = row_a
+        else:
+            content_first = row_a
+            content_second = row_b
+
+        # Construct comparison prompt inner function
         def get_content(row):
             p = user_tmpl
             for col, val in row.items():
                 p = p.replace(f"{{{{{col}}}}}", str(val))
             return p
         
-        content_a = get_content(row_a)
-        content_b = get_content(row_b)
+        str_content_1 = get_content(content_first)
+        str_content_2 = get_content(content_second)
         
         vars_str = ", ".join([f"'{v}'" for v in var_names])
         
         comparison_prompt = f"Please compare the following two items and decide which one has a higher score for the following criteria: {vars_str}.\n\n"
-        comparison_prompt += f"ITEM A:\n{content_a}\n\n"
-        comparison_prompt += f"ITEM B:\n{content_b}\n\n"
+        comparison_prompt += f"ITEM A:\n{str_content_1}\n\n"
+        comparison_prompt += f"ITEM B:\n{str_content_2}\n\n"
         
         # Construct Expected JSON format example
         ex_json = {}
@@ -325,30 +351,113 @@ async def run_trueskill_annotation(df, system_prompt, user_tmpl, schema_fields, 
                     if isinstance(val, dict): # Handle nested {"winner": "A"} case
                         val = val.get("winner", "Draw")
                     
-                    val = str(val).upper().strip()
-                    if 'A' in val: winner = 'a'
-                    elif 'B' in val: winner = 'b'
-                    else: winner = 'draw'
-                    winners[v] = winner
+                    # --- [改进 2] 更严格的解析逻辑 ---
+                    val_str = str(val).upper().strip().strip('."\'')
+                    
+                    raw_winner = 'draw'
+                    if val_str == 'A':
+                        raw_winner = 'a'
+                    elif val_str == 'B':
+                        raw_winner = 'b'
+                    
+                    # --- [改进 3] 映射回真实的索引 (Un-swap) ---
+                    # 如果 raw_winner 是 'a' (视觉上的第一个)，且 is_swapped=True，那其实选的是 idx_b
+                    if raw_winner == 'a':
+                        final_winner = 'b' if is_swapped else 'a'
+                    elif raw_winner == 'b':
+                        final_winner = 'a' if is_swapped else 'b'
+                    else:
+                        final_winner = 'draw'
+                        
+                    winners[v] = final_winner
                 
                 if progress_callback:
                     progress_callback()
                 
                 return (idx_a, idx_b, winners)
+            
             except Exception as e:
-                # Log error or just return all draws?
+                # Log error in production
                 if progress_callback:
-                    progress_callback()
-                # Return draws for all
+                    progress_callback() # 依然推进进度条防止卡死
+                # Return draws for all on error
                 return (idx_a, idx_b, {v: 'draw' for v in var_names})
 
-    tasks = [compare_task(p) for p in pairs]
-    results = await asyncio.gather(*tasks)
+    # --- [改进 4] 主动学习循环 (Active Learning Loop) ---
+    comparisons_done = 0
     
-    # Update ratings
-    for idx_a, idx_b, winners_map in results:
-        update_comparison_multi(ratings, idx_a, idx_b, winners_map)
+    while comparisons_done < total_budget:
+        # A. 动态生成最佳配对 (Swiss System logic)
+        # 计算当前所有 item 的综合得分 (所有字段 mu 之和)
+        item_scores = []
+        for idx in indices:
+            # 加微小扰动防止初始 25.0 全部相同导致死板排序
+            total_mu = sum([ratings[idx][v].mu for v in var_names])
+            score = total_mu + random.uniform(-0.01, 0.01)
+            item_scores.append((idx, score))
         
+        # 按分数排序：让分数接近的人相邻
+        item_scores.sort(key=lambda x: x[1])
+        sorted_indices = [x[0] for x in item_scores]
+        
+        current_batch_pairs = []
+        used_in_batch = set()
+        
+        # 贪心匹配相邻者
+        i = 0
+        while i < len(sorted_indices) - 1:
+            if len(current_batch_pairs) >= batch_size:
+                break
+            
+            # 如果预算快不够了，就不生成满批次
+            if (comparisons_done + len(current_batch_pairs)) >= total_budget:
+                break
+
+            p1 = sorted_indices[i]
+            
+            # 寻找 p1 的最佳对手 (优先 p1+1, 其次 p1+2...)
+            found_opponent = False
+            for offset in range(1, 4): # 向后看 3 个邻居
+                if i + offset >= len(sorted_indices): 
+                    break
+                
+                p2 = sorted_indices[i + offset]
+                if p2 in used_in_batch: 
+                    continue
+                
+                pair_key = tuple(sorted((p1, p2)))
+                
+                if pair_key not in played_pairs:
+                    current_batch_pairs.append([p1, p2])
+                    played_pairs.add(pair_key)
+                    used_in_batch.add(p1)
+                    used_in_batch.add(p2)
+                    found_opponent = True
+                    break
+            
+            # 无论是否找到对手，主指针都向前移
+            # (严格来说如果没找到，p1这次轮空，继续看下一个人)
+            if found_opponent:
+                i += 1 # 下次大循环还需要 i+1，配合循环底部的逻辑
+            
+            i += 1
+
+        # 如果实在找不到配对了 (例如全比完了)，强制退出防止死循环
+        if not current_batch_pairs:
+            break
+
+        # B. 并发执行本批次
+        tasks = [compare_task(p) for p in current_batch_pairs]
+        results = await asyncio.gather(*tasks)
+        
+        # C. 立即更新分数 (Online Update)
+        # 这一步更新后，下一轮 while 循环的 item_scores 就会变化，
+        # 从而实现“根据最新战况安排下一场比赛”
+        for idx_a, idx_b, winners_map in results:
+            update_comparison_multi(ratings, idx_a, idx_b, winners_map)
+        
+        comparisons_done += len(results)
+
     # Convert ratings to a list of results
     final_results = []
     for idx in indices:
@@ -363,7 +472,7 @@ async def run_trueskill_annotation(df, system_prompt, user_tmpl, schema_fields, 
             "index": idx,
             "status": "success",
             "parsed": res_parsed,
-            "raw": "TrueSkill Multi-Variable"
+            "raw": "TrueSkill Multi-Variable Active Learning"
         })
         
     return final_results
